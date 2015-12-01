@@ -6,12 +6,12 @@ DROP FUNCTION IF EXISTS ST_SplitLidar(
   metric_srid integer
 );
 
-CREATE OR REPLACE FUNCTION ST_SplitLidar(_parent text, bound_polygon_text text, slices integer, metric_srid integer = 32610)
+CREATE OR REPLACE FUNCTION ST_SplitLidar(_parent text, bound_polygon_text text, slices integer, metric_srid integer)
   RETURNS TABLE(id text,  the_geom geometry) AS
 $$
 BEGIN
    RETURN QUERY EXECUTE 
-   'SELECT CONCAT('''||_parent||''',''__'' ,CAST(ROW_NUMBER() OVER (ORDER BY cell) AS text)  ) as id, cell FROM (SELECT ( ST_Dump(makegrid_2d(ST_GeomFromText('''|| bound_polygon_text ||''', '|| metric_srid ||'), '|| slices ||'))).geom AS cell) AS q_grid;';
+   'SELECT CONCAT('''||_parent||''',''__'' ,CAST(ROW_NUMBER() OVER (ORDER BY cell) AS text)  ) as id, cell FROM (SELECT ( ST_Dump(makegrid_2d(ST_GeomFromText('''|| bound_polygon_text ||''', '|| metric_srid ||'), '|| slices ||', '|| metric_srid ||'))).geom AS cell) AS q_grid;';
 
 END;
 $$ LANGUAGE plpgsql;

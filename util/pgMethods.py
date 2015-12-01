@@ -18,6 +18,10 @@ class Methods:
 		# save cursor
 		self.cur  = create_engine('postgresql://%s@%s:5432/%s' % (User, host,database))
 
+	def pg_post(self, SQLcommand):
+		connection = self.cur.connect()
+		connection.execute(SQLcommand);
+		connection.close()
 
 	def pg_df(self, SQLcommand):
 		
@@ -29,18 +33,46 @@ class Methods:
 		return dataframe.to_sql(table_name, self.cur, if_exists=if_exists)
 
 
-	def partionSpace(self, parent_table, split=3):
+	def tableSetUp(self, transform_to=None):
+		if transform_to:
+			projection = transform_to
+		else:
+			projection = self.projection 
+		# Create connection
+		connection = self.cur.connect()
+		connection.execute("""DROP TABLE IF EXISTS spill_over_master; DROP TABLE IF EXISTS geometries_master; DROP TABLE IF EXISTS points_master;""")
+		connection.execute("""CREATE TABLE  spill_over_master (x double precision, y double precision, z double precision, the_geom geometry(Point,%s));""" % projection);
+		connection.execute("""CREATE TABLE  geometries_master (label bigint, height double precision, the_geom geometry)""");
+		connection.execute("""CREATE TABLE  points_master (x double precision, y double precision, z double precision, the_geom geometry(Point,%s));""" % projection);
+		connection.close()
+
+
+
+	def partionSpace(self, parent_table, split=3, transform_to=None):
 		# Create connection
 		connection = self.cur.connect()
 
 		# Get the bounding box of the parent lidar table
-		boundary = connection.execute('SELECT ST_AsText(ST_Envelope(ST_Collect(the_geom))) as bbox FROM %s;' % parent_table).first().bbox
+		if transform_to:
+			boundary = connection.execute('SELECT ST_AsText(ST_Envelope(ST_Collect(ST_Transform(the_geom, %i)))) as bbox FROM %s;' % (self.projection, parent_table)).first().bbox
+			projection = transform_to;
+
+			# partion the bounding box into squares with equal area.
+			connection.execute("""DROP TABLE IF EXISTS %(parent_table)s_bbox;  
+				CREATE TABLE %(parent_table)s_bbox AS \
+				SELECT id, ST_Transform(the_geom, %(transform_to)i) AS the_geom\
+				FROM ST_SplitLidar('%(parent_table)s', '%(boundary)s', %(split)i, %(projection)i)""" % {'parent_table': parent_table, "split": split, 'boundary': boundary, 'projection':self.projection,'transform_to':transform_to});
 		
-		# partion the bounding box into squares with equal area.
-		connection.execute("""DROP TABLE IF EXISTS %(parent_table)s_bbox;  
-			CREATE TABLE %(parent_table)s_bbox AS \
-			SELECT * \
-			FROM ST_SplitLidar('%(parent_table)s', '%(boundary)s', %(split)i, %(projection)i)""" % {'parent_table': parent_table, "split": split, 'boundary': boundary, 'projection':self.projection});
+
+		else:
+			boundary = connection.execute('SELECT ST_AsText(ST_Envelope(ST_Collect(the_geom))) as bbox FROM %s;' % parent_table).first().bbox
+			projection = self.projection;
+		
+			# partion the bounding box into squares with equal area.
+			connection.execute("""DROP TABLE IF EXISTS %(parent_table)s_bbox;  
+				CREATE TABLE %(parent_table)s_bbox AS \
+				SELECT * \
+				FROM ST_SplitLidar('%(parent_table)s', '%(boundary)s', %(split)i, %(projection)i)""" % {'parent_table': parent_table, "split": split, 'boundary': boundary, 'projection':projection});
 		
 		connection.close()
 		
@@ -171,5 +203,28 @@ class Methods:
 		# Close connection
 		connection.close();
 
+
+	def loadpointsCallBack(self, dataframe, child_bbox_id, points_master_table='points_master'):
+		# Create connection
+		connection = self.cur.connect()
+
+		# Get table names
+		parent_table, child_id = child_bbox_id.split('__');
+
+		# Create a randomly-generated and temporary table
+		table_random_index_labels = "temp_"+''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(20))
+		
+		# Send the delete id's to the server 
+		dataframe.to_sql(table_random_index_labels, self.cur, if_exists='replace');
+
+		# Insert spillovers into master table
+		SQLcommand = "INSERT INTO %s SELECT a.x, a.y, a.z, a.the_geom FROM %s a RIGHT JOIN %s b on a.id=b.id;" % (points_master_table, parent_table, table_random_index_labels)
+		connection.execute(SQLcommand)
+
+		# Drop the temporary table
+		connection.execute('DROP TABLE IF EXISTS %s;' % table_random_index_labels);
+
+		# Close connection
+		connection.close();
 
 		

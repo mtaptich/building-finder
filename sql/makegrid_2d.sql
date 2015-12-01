@@ -1,7 +1,7 @@
 CREATE OR REPLACE FUNCTION public.makegrid_2d (
   bound_polygon public.geometry,
   slices integer,
-  metric_srid integer = 32610 --metric SRID 
+  metric_srid integer  
 )
 RETURNS public.geometry AS
 $body$

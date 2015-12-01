@@ -40,7 +40,7 @@ class pgDataLoader:
 		# Close server connection
 		connection.close()
 
-	def lidar_to_server(self, lidar_path_to_dilimited,lidar_name):
+	def lidar_to_server(self, lidar_path_to_dilimited,lidar_name,transform_to=None):
 
 		# Create connection
 		connection = self.cur.connect()
@@ -53,34 +53,69 @@ class pgDataLoader:
 		connection.execute(SQLcommand)
 
 		# Create empty table
+		print "Create empty table"
 		SQLcommand = "CREATE TABLE %s (x double precision, y double precision, z double precision)"  % lidar_name
 		connection.execute(SQLcommand)
 
 		# Insert lidar data
+		print 'Insert lidar data'
 		SQLcommand = "COPY %s FROM '%s' CSV;" % ( lidar_name, lidar_path_to_dilimited)
 		connection.execute(SQLcommand)
 
-		# Add a geometry column
-		SQLcommand = "SELECT AddGeometryColumn('%s','the_geom',%i,'POINT',2)"  % (lidar_name, self.projection)
-		connection.execute(SQLcommand)
 
-		# Use point data to create geometry
-		SQLcommand = "UPDATE %s SET the_geom = ST_GeomFromText('POINT(' || x || ' ' || y || ')',%i)"  % (lidar_name, self.projection)
-		connection.execute(SQLcommand)
+		if transform_to:
+			# Add a geometry column
+			print 'Add a geometry column'
+			SQLcommand = "SELECT AddGeometryColumn('%s','the_geom',%i,'POINT',2)"  % (lidar_name, transform_to)
+			connection.execute(SQLcommand)
+
+			print 'Use point data to create geometry'
+			SQLcommand = "UPDATE %s SET the_geom = ST_Transform(ST_GeomFromText('POINT(' || x || ' ' || y || ')', %i), %i)" % (lidar_name, self.projection, transform_to)
+			connection.execute(SQLcommand)
+
+			print 'Reproject X'
+			SQLcommand = "UPDATE %s SET x = ST_X(the_geom)" % lidar_name
+			connection.execute(SQLcommand)
+
+			print 'Reproject Y'
+			SQLcommand = "UPDATE %s SET y = ST_Y(the_geom)" % lidar_name
+			connection.execute(SQLcommand)
+
+		
+		else:
+			# Add a geometry column
+			print 'Add a geometry column'
+			SQLcommand = "SELECT AddGeometryColumn('%s','the_geom',%i,'POINT',2)"  % (lidar_name, self.projection)
+			connection.execute(SQLcommand)
+
+			# Use point data to create geometry
+			print 'Use point data to create geometry'
+			SQLcommand = "UPDATE %s SET the_geom = ST_GeomFromText('POINT(' || x || ' ' || y || ')',%i)"  % (lidar_name, self.projection)
+			connection.execute(SQLcommand)
+
+		#UPDATE X,Y IF NEEDED (MUST BE IN METERS)
+
+		#SQLcommand = "UPDATE %s SET x = "  % (lidar_name, self.projection)
+		#connection.execute(SQLcommand)
 
 		# Drop previous spatial index is needed
+		print 'Drop previous spatial index is needed'
 		SQLcommand = "DROP INDEX if EXISTS %s_gis" % lidar_name
 		connection.execute(SQLcommand)
 
 		# Add spatial index to improve spatial operations
+		print 'Add spatial index to improve spatial operations'
 		SQLcommand = "CREATE INDEX %s_gis ON %s USING GIST (the_geom) "  % (lidar_name, lidar_name)
 		connection.execute(SQLcommand)
 
-		_random = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(2))
-		SQLcommand = "DROP SEQUENCE IF EXISTS ids_%s; CREATE SEQUENCE ids_%s; ALTER TABLE %s ADD id INT UNIQUE; UPDATE %s SET id = NEXTVAL('ids_%s');"  %(_random, _random, lidar_name, lidar_name, _random)
+		# Add unique id values
+		print "Add unique id values"
+		SQLcommand = "ALTER TABLE %s ADD id bigserial; " % lidar_name
 		connection.execute(SQLcommand)
 
-		SQLcommand = "CREATE INDEX idx_%s ON %s USING btree (id);" %(_random, lidar_name)
+		# Add index on id to optimize joins
+		print 'Add index on id to optimize joins'
+		SQLcommand = "CREATE INDEX idx_%s ON %s USING btree (id);" %(lidar_name, lidar_name)
 		connection.execute(SQLcommand)
 
 		# Close connection with server
